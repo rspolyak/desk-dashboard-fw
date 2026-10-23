@@ -6,6 +6,8 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -38,24 +40,68 @@ void show_climate(const dashboard::ClimateLabels& labels)
 }
 
 /**
- * @brief Reads the indoor sensor every few seconds and redraws the changed tiles; never returns.
- * @param[in] labels The INDOOR and HUMIDITY value labels.
+ * @brief Picks the backlight brightness for an ambient light level; it rises with the logarithm of the light, as the eye sees it.
+ * @param[in] lux Ambient light in lux.
+ * @return Brightness in percent: dark_percent at dark_lux or less, 100 at bright_lux or more.
  */
-[[noreturn]] void refresh_climate_forever(const dashboard::ClimateLabels& labels)
+int backlight_percent_for(float lux)
+{
+    constexpr float dark_lux = 10.0f;
+    constexpr float bright_lux = 250.0f;
+    constexpr float dark_percent = 10.0f;
+    constexpr float bright_percent = 100.0f;
+
+    const float limited_lux = std::clamp(lux, dark_lux, bright_lux);
+    const float position = std::log(limited_lux / dark_lux) / std::log(bright_lux / dark_lux);
+    return static_cast<int>(std::lround(dark_percent + position * (bright_percent - dark_percent)));
+}
+
+/**
+ * @brief Reads the ambient light and fades the backlight to match; keeps the brightness if the read fails.
+ * @return ESP_OK, or the error of the light read, which the board has already logged.
+ */
+esp_err_t adjust_backlight()
+{
+    float lux = 0.0f;
+    const esp_err_t status = bsp::light_read(lux);
+    if (status != ESP_OK) {
+        return status;
+    }
+
+    const int percent = backlight_percent_for(lux);
+    ESP_LOGI(log_tag, "light %.0f lux, backlight %d %%", lux, percent);
+    bsp::display_backlight(percent);
+    return ESP_OK;
+}
+
+/**
+ * @brief Every few seconds reads the sensors that were set up, redraws the changed tiles and adjusts the backlight; never returns.
+ * @param[in] labels The INDOOR and HUMIDITY value labels.
+ * @param[in] climate_ready true if the temperature and humidity sensor was set up.
+ * @param[in] light_ready true if the ambient light sensor was set up.
+ */
+[[noreturn]] void refresh_forever(const dashboard::ClimateLabels& labels, bool climate_ready, bool light_ready)
 {
     constexpr std::uint32_t refresh_period_ms = 5000;
 
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(refresh_period_ms));
-        show_climate(labels);
-        lv_refr_now(nullptr);
+
+        if (climate_ready) {
+            show_climate(labels);
+            lv_refr_now(nullptr);
+        }
+
+        if (light_ready) {
+            (void)adjust_backlight();
+        }
     }
 }
 } // namespace
 
 /**
  * @brief Brings up the board, draws the dashboard and keeps the indoor values up to date.
- * @return Only if setup fails, with its error, or with ESP_OK if the sensor is missing and nothing needs updating.
+ * @return Only if the board or the display cannot be set up, with the error of that step.
  */
 esp_err_t start()
 {
@@ -67,6 +113,7 @@ esp_err_t start()
     ESP_LOGI(log_tag, "starting");
 
     const bool climate_ready = bsp::climate_init() == ESP_OK;
+    const bool light_ready = bsp::light_init() == ESP_OK;
 
     status = lvgl_port::start();
     if (status != ESP_OK) {
@@ -79,11 +126,16 @@ esp_err_t start()
         show_climate(climate_labels);
     }
     lv_refr_now(nullptr);
-    bsp::display_backlight(true);
 
-    if (climate_ready) {
-        refresh_climate_forever(climate_labels);
+    constexpr int full_brightness_percent = 100;
+    bool backlight_set = false;
+    if (light_ready) {
+        backlight_set = adjust_backlight() == ESP_OK;
     }
-    return ESP_OK;
+    if (!backlight_set) {
+        bsp::display_backlight(full_brightness_percent);
+    }
+
+    refresh_forever(climate_labels, climate_ready, light_ready);
 }
 } // namespace app

@@ -34,10 +34,10 @@ esp_err_t display_init(int& width, int& height);
 void display_draw(int x, int y, int width, int height, const std::uint16_t* pixels);
 
 /**
- * @brief Switches the display backlight on or off.
- * @param[in] on true to switch the backlight on.
+ * @brief Fades the display backlight to a new brightness over about one second.
+ * @param[in] percent Brightness from 0 (off) to 100 (full).
  */
-void display_backlight(bool on);
+void display_backlight(int percent);
 
 /**
  * @brief Sets up the indoor temperature and humidity sensor.
@@ -52,4 +52,17 @@ esp_err_t climate_init();
  * @return ESP_OK, or the error of the measurement.
  */
 esp_err_t climate_read(float& temperature_c, float& humidity_percent);
+
+/**
+ * @brief Sets up the ambient light sensor.
+ * @return ESP_OK, or the error of the step that failed.
+ */
+esp_err_t light_init();
+
+/**
+ * @brief Measures the ambient light.
+ * @param[out] lux Approximate illuminance in lux.
+ * @return ESP_OK, or the error of the measurement.
+ */
+esp_err_t light_read(float& lux);
 } // namespace bsp

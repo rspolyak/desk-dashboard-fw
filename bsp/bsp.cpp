@@ -1,7 +1,9 @@
 #include "bsp/bsp.hpp"
-#include "driver/gpio.h"
 #include "driver/i2c_master.h"
+#include "driver/ledc.h"
 #include "driver/spi_master.h"
+#include "esp_adc/adc_cali_scheme.h"
+#include "esp_adc/adc_oneshot.h"
 #include "esp_attr.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
@@ -20,17 +22,30 @@
 namespace bsp {
 namespace {
 constexpr const char* log_tag = "bsp";
-constexpr gpio_num_t backlight_pin = GPIO_NUM_47;
-constexpr std::uint32_t backlight_on_level = 1;
-constexpr std::uint32_t backlight_off_level = 0;
+constexpr ledc_mode_t backlight_speed_mode = LEDC_LOW_SPEED_MODE;
+constexpr ledc_channel_t backlight_channel = LEDC_CHANNEL_0;
+constexpr ledc_timer_bit_t backlight_duty_resolution = LEDC_TIMER_10_BIT;
+constexpr std::uint32_t backlight_duty_max = (1U << backlight_duty_resolution) - 1;
 constexpr spi_host_device_t display_spi_host = SPI2_HOST;
 constexpr int display_width = 480;
 constexpr int display_height = 320;
+constexpr adc_unit_t light_adc_unit = ADC_UNIT_1;
+constexpr adc_channel_t light_adc_channel = ADC_CHANNEL_8;
+
+/**
+ * @brief The ADC unit and its calibration used to read the light sensor.
+ */
+struct LightSensor {
+    adc_oneshot_unit_handle_t unit = nullptr;
+    adc_cali_handle_t calibration = nullptr;
+};
 
 // Static: hardware singleton, created by display_init() and used by display_draw().
 esp_lcd_panel_handle_t display_panel = nullptr;
 // Static: hardware singleton, created by climate_init() and used by climate_read().
 sht4x_handle_t climate_sensor = nullptr;
+// Static: hardware singleton, created by light_init() and used by light_read().
+LightSensor light_sensor = {};
 
 /**
  * @brief Starts the SPI bus the display is on, sized for one full frame.
@@ -171,27 +186,44 @@ esp_err_t configure_display_panel(esp_lcd_panel_handle_t panel)
 } // namespace
 
 /**
- * @brief Brings up the board's devices; the backlight starts off.
- * @return ESP_OK, or the error of the pin setup that failed.
+ * @brief Brings up the board's devices; the backlight starts off, driven by PWM on GPIO47.
+ * @return ESP_OK, or the error of the backlight setup step that failed.
  */
 esp_err_t init()
 {
-    const gpio_config_t backlight_config = {
-        .pin_bit_mask = 1ULL << backlight_pin,
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    esp_err_t status = gpio_config(&backlight_config);
+    constexpr gpio_num_t backlight_pin = GPIO_NUM_47;
+    constexpr ledc_timer_t backlight_timer = LEDC_TIMER_0;
+    constexpr std::uint32_t backlight_pwm_hz = 5000;
+    constexpr std::uint32_t backlight_off_duty = 0;
+    constexpr int default_interrupt_flags = 0;
+
+    ledc_timer_config_t timer_config = {};
+    timer_config.speed_mode = backlight_speed_mode;
+    timer_config.duty_resolution = backlight_duty_resolution;
+    timer_config.timer_num = backlight_timer;
+    timer_config.freq_hz = backlight_pwm_hz;
+    timer_config.clk_cfg = LEDC_AUTO_CLK;
+    esp_err_t status = ledc_timer_config(&timer_config);
     if (status != ESP_OK) {
-        ESP_LOGE(log_tag, "backlight pin setup failed: %s", esp_err_to_name(status));
+        ESP_LOGE(log_tag, "backlight PWM timer setup failed: %s", esp_err_to_name(status));
         return status;
     }
 
-    status = gpio_set_level(backlight_pin, backlight_off_level);
+    ledc_channel_config_t channel_config = {};
+    channel_config.gpio_num = backlight_pin;
+    channel_config.speed_mode = backlight_speed_mode;
+    channel_config.channel = backlight_channel;
+    channel_config.timer_sel = backlight_timer;
+    channel_config.duty = backlight_off_duty;
+    status = ledc_channel_config(&channel_config);
     if (status != ESP_OK) {
-        ESP_LOGE(log_tag, "switching the backlight off failed: %s", esp_err_to_name(status));
+        ESP_LOGE(log_tag, "backlight PWM channel setup failed: %s", esp_err_to_name(status));
+        return status;
+    }
+
+    status = ledc_fade_func_install(default_interrupt_flags);
+    if (status != ESP_OK) {
+        ESP_LOGE(log_tag, "backlight fade setup failed: %s", esp_err_to_name(status));
         return status;
     }
     return ESP_OK;
@@ -258,15 +290,26 @@ void display_draw(int x, int y, int width, int height, const std::uint16_t* pixe
 }
 
 /**
- * @brief Switches the display backlight on or off.
- * @param[in] on true to switch the backlight on.
+ * @brief Fades the display backlight to a new brightness over about one second.
+ * @param[in] percent Brightness from 0 (off) to 100 (full); values outside are limited to that range.
  */
-void display_backlight(bool on)
+void display_backlight(int percent)
 {
-    const std::uint32_t level = on ? backlight_on_level : backlight_off_level;
-    const esp_err_t status = gpio_set_level(backlight_pin, level);
+    constexpr int percent_min = 0;
+    constexpr int percent_max = 100;
+    constexpr int fade_time_ms = 1000;
+
+    const int limited_percent = std::clamp(percent, percent_min, percent_max);
+    const std::uint32_t duty = backlight_duty_max * static_cast<std::uint32_t>(limited_percent) / percent_max;
+    esp_err_t status = ledc_set_fade_with_time(backlight_speed_mode, backlight_channel, duty, fade_time_ms);
     if (status != ESP_OK) {
-        ESP_LOGE(log_tag, "switching the backlight failed: %s", esp_err_to_name(status));
+        ESP_LOGE(log_tag, "backlight fade setup failed: %s", esp_err_to_name(status));
+        return;
+    }
+
+    status = ledc_fade_start(backlight_speed_mode, backlight_channel, LEDC_FADE_NO_WAIT);
+    if (status != ESP_OK) {
+        ESP_LOGE(log_tag, "backlight fade start failed: %s", esp_err_to_name(status));
     }
 }
 
@@ -328,6 +371,71 @@ esp_err_t climate_read(float& temperature_c, float& humidity_percent)
     }
 
     humidity_percent = std::clamp(humidity, humidity_min_percent, humidity_max_percent);
+    return ESP_OK;
+}
+
+/**
+ * @brief Sets up the ADC that reads the ambient light sensor on GPIO9 (0..1.75 V range), with its factory calibration.
+ * @return ESP_OK, or the error of the step that failed.
+ */
+esp_err_t light_init()
+{
+    constexpr adc_atten_t attenuation = ADC_ATTEN_DB_6;
+
+    adc_oneshot_unit_init_cfg_t unit_config = {};
+    unit_config.unit_id = light_adc_unit;
+    esp_err_t status = adc_oneshot_new_unit(&unit_config, &light_sensor.unit);
+    if (status != ESP_OK) {
+        ESP_LOGE(log_tag, "light sensor ADC setup failed: %s", esp_err_to_name(status));
+        return status;
+    }
+
+    adc_oneshot_chan_cfg_t channel_config = {};
+    channel_config.atten = attenuation;
+    channel_config.bitwidth = ADC_BITWIDTH_DEFAULT;
+    status = adc_oneshot_config_channel(light_sensor.unit, light_adc_channel, &channel_config);
+    if (status != ESP_OK) {
+        ESP_LOGE(log_tag, "light sensor ADC channel setup failed: %s", esp_err_to_name(status));
+        return status;
+    }
+
+    adc_cali_curve_fitting_config_t calibration_config = {};
+    calibration_config.unit_id = light_adc_unit;
+    calibration_config.chan = light_adc_channel;
+    calibration_config.atten = attenuation;
+    calibration_config.bitwidth = ADC_BITWIDTH_DEFAULT;
+    status = adc_cali_create_scheme_curve_fitting(&calibration_config, &light_sensor.calibration);
+    if (status != ESP_OK) {
+        ESP_LOGE(log_tag, "light sensor ADC calibration setup failed: %s", esp_err_to_name(status));
+        return status;
+    }
+    return ESP_OK;
+}
+
+/**
+ * @brief Measures the ambient light from the averaged sensor voltage.
+ * @param[out] lux Approximate illuminance; the ALS-PT19 gives about 0.2 uA per lux into 10 kOhm, so 2 mV per lux.
+ * @return ESP_OK, or the error of the ADC read that failed.
+ */
+esp_err_t light_read(float& lux)
+{
+    constexpr int sample_count = 8;
+    constexpr float millivolts_per_lux = 2.0f;
+
+    int sum_mv = 0;
+    for (int i = 0; i < sample_count; ++i) {
+        int sample_mv = 0;
+        const esp_err_t status =
+            adc_oneshot_get_calibrated_result(light_sensor.unit, light_sensor.calibration, light_adc_channel, &sample_mv);
+        if (status != ESP_OK) {
+            ESP_LOGE(log_tag, "light sensor read failed: %s", esp_err_to_name(status));
+            return status;
+        }
+        sum_mv += sample_mv;
+    }
+
+    const float level_mv = static_cast<float>(sum_mv) / sample_count;
+    lux = level_mv / millivolts_per_lux;
     return ESP_OK;
 }
 } // namespace bsp
