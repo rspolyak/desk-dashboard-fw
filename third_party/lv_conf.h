@@ -4,5 +4,6 @@
 
 #define LV_BUILD_EXAMPLES 0
 #define LV_BUILD_DEMOS 0
+#define LV_DRAW_SW_SUPPORT_RGB565_SWAPPED 1
 
 #endif /* LV_CONF_H */

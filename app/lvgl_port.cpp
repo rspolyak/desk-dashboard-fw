@@ -27,7 +27,7 @@ std::uint32_t tick_ms() { return static_cast<std::uint32_t>(esp_timer_get_time()
  * @brief Sends one rendered band of pixels from LVGL to the board display.
  * @param[in] display LVGL display that rendered the band.
  * @param[in] area Screen rectangle the pixels belong to.
- * @param[in] pixels RGB565 pixels of the rectangle, row-major.
+ * @param[in] pixels RGB565 pixels of the rectangle, high byte first, row-major.
  */
 void flush(lv_display_t* display, const lv_area_t* area, std::uint8_t* pixels)
 {
@@ -39,16 +39,13 @@ void flush(lv_display_t* display, const lv_area_t* area, std::uint8_t* pixels)
 
 /**
  * @brief Connects LVGL to the board display.
- * @return ESP_OK, ESP_ERR_NOT_SUPPORTED if the board has no display, or the error of the step that failed.
+ * @return ESP_OK, or the error of the step that failed.
  */
 esp_err_t start()
 {
     int width = 0;
     int height = 0;
     const esp_err_t status = bsp::display_init(width, height);
-    if (status == ESP_ERR_NOT_SUPPORTED) {
-        return status;
-    }
     if (status != ESP_OK) {
         ESP_LOGE(log_tag, "display init failed: %s", esp_err_to_name(status));
         return status;
@@ -63,6 +60,7 @@ esp_err_t start()
         return ESP_ERR_NO_MEM;
     }
 
+    lv_display_set_color_format(display, LV_COLOR_FORMAT_RGB565_SWAPPED);
     lv_display_set_buffers(display, draw_buffer, nullptr, sizeof(draw_buffer),
                            LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(display, flush);
