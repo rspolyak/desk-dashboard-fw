@@ -33,8 +33,33 @@ dependencies:
     source:
       type: idf
     version: 5.4.0
+  k0i05/esp_sht4x:
+    component_hash: 5a00f42596dd048c1a5db8e32411a1aa94f7d9aa0e30dd7bc1c19f3c036b840c
+    dependencies:
+    - name: idf
+      require: private
+      version: '>5.3.0'
+    - name: k0i05/esp_type_utils
+      registry_url: https://components.espressif.com
+      require: private
+      version: '>=1.0.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.2.7
+  k0i05/esp_type_utils:
+    component_hash: 95d8ec40268e045f7e264d8035f451e53844b4a2f6d5f112ece6645c5effd639
+    dependencies:
+    - name: idf
+      require: private
+      version: '>5.3.0'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 1.2.7
 direct_dependencies:
 - espressif/esp_lcd_st7796
-manifest_hash: 4ad9b162d932c769f0afb60cecbc446ebfd4f2f92d361a4d51e804eee1788848
+- k0i05/esp_sht4x
+manifest_hash: 26e07f992bd99fb934ad532f067f6d406d83148fc020f4c38017add5e109c3b5
 target: esp32s3
 version: 2.0.0

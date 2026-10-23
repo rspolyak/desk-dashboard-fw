@@ -38,4 +38,18 @@ void display_draw(int x, int y, int width, int height, const std::uint16_t* pixe
  * @param[in] on true to switch the backlight on.
  */
 void display_backlight(bool on);
+
+/**
+ * @brief Sets up the indoor temperature and humidity sensor.
+ * @return ESP_OK, or the error of the step that failed.
+ */
+esp_err_t climate_init();
+
+/**
+ * @brief Measures the indoor temperature and relative humidity.
+ * @param[out] temperature_c Temperature in degrees Celsius.
+ * @param[out] humidity_percent Relative humidity in percent, 0 to 100.
+ * @return ESP_OK, or the error of the measurement.
+ */
+esp_err_t climate_read(float& temperature_c, float& humidity_percent);
 } // namespace bsp

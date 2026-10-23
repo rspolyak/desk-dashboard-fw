@@ -98,8 +98,9 @@ lv_obj_t* label(lv_obj_t* parent, const char* value, const lv_font_t& font, std:
  * @param[in] title Title shown at the top of the tile.
  * @param[in] value Value shown at the bottom; cut off with "..." if wider than the tile.
  * @param[in] value_color Value colour as 0xRRGGBB.
+ * @return The value label, for updating the value later.
  */
-void tile(lv_obj_t* parent, int x, const char* title, const char* value, std::uint32_t value_color)
+lv_obj_t* tile(lv_obj_t* parent, int x, const char* title, const char* value, std::uint32_t value_color)
 {
     lv_obj_t* box = plain_box(parent, x, tile_y, tile_width, tile_height, tile_color);
     lv_obj_set_style_radius(box, tile_radius, LV_PART_MAIN);
@@ -109,6 +110,7 @@ void tile(lv_obj_t* parent, int x, const char* title, const char* value, std::ui
     lv_obj_set_width(value_label, tile_width - 2 * tile_padding);
     lv_label_set_long_mode(value_label, LV_LABEL_LONG_MODE_DOTS);
     lv_obj_align(value_label, LV_ALIGN_BOTTOM_LEFT, tile_padding, -tile_text_inset_y);
+    return value_label;
 }
 
 /**
@@ -138,9 +140,10 @@ void sun(lv_obj_t* parent)
 } // namespace
 
 /**
- * @brief Builds the dashboard on the active LVGL screen, laid out for 480x320.
+ * @brief Builds the dashboard on the active LVGL screen, laid out for 480x320; the indoor values start as dashes.
+ * @return The labels of the INDOOR and HUMIDITY tiles, for updating their values.
  */
-void create()
+ClimateLabels create()
 {
     lv_obj_t* screen = lv_screen_active();
     lv_obj_set_style_bg_color(screen, lv_color_hex(background_color), LV_PART_MAIN);
@@ -159,8 +162,10 @@ void create()
     lv_obj_align(label(screen, "18\xC2\xB0 Sunny", montserrat_bold_16, text_color), LV_ALIGN_TOP_MID,
                  sun_x - screen_center_x, weather_text_y);
 
-    tile(screen, tile_x[0], "INDOOR", "22.4\xC2\xB0" "C", value_cyan);
-    tile(screen, tile_x[1], "HUMIDITY", "45 %", value_cyan);
+    ClimateLabels climate = {};
+    climate.temperature = tile(screen, tile_x[0], "INDOOR", "--.-\xC2\xB0" "C", value_cyan);
+    climate.humidity = tile(screen, tile_x[1], "HUMIDITY", "-- %", value_cyan);
     tile(screen, tile_x[2], "NEXT", "15:00 Standup", text_color);
+    return climate;
 }
 } // namespace app::dashboard

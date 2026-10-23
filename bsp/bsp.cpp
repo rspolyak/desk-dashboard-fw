@@ -1,5 +1,6 @@
 #include "bsp/bsp.hpp"
 #include "driver/gpio.h"
+#include "driver/i2c_master.h"
 #include "driver/spi_master.h"
 #include "esp_attr.h"
 #include "esp_lcd_panel_io.h"
@@ -8,6 +9,8 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "sht4x.h"
+#include <algorithm>
 #include <cstddef>
 
 /**
@@ -26,6 +29,8 @@ constexpr int display_height = 320;
 
 // Static: hardware singleton, created by display_init() and used by display_draw().
 esp_lcd_panel_handle_t display_panel = nullptr;
+// Static: hardware singleton, created by climate_init() and used by climate_read().
+sht4x_handle_t climate_sensor = nullptr;
 
 /**
  * @brief Starts the SPI bus the display is on, sized for one full frame.
@@ -263,5 +268,66 @@ void display_backlight(bool on)
     if (status != ESP_OK) {
         ESP_LOGE(log_tag, "switching the backlight failed: %s", esp_err_to_name(status));
     }
+}
+
+/**
+ * @brief Starts the sensor's own I2C bus and sets up the SHT40 temperature and humidity sensor.
+ * @return ESP_OK, or the error of the step that failed.
+ */
+esp_err_t climate_init()
+{
+    constexpr i2c_port_num_t i2c_port = I2C_NUM_0;
+    constexpr gpio_num_t sda_pin = GPIO_NUM_18;
+    constexpr gpio_num_t scl_pin = GPIO_NUM_17;
+    constexpr std::uint8_t glitch_filter_cycles = 7;
+    constexpr std::uint16_t sensor_address = 0x44;
+    constexpr std::uint32_t i2c_clock_hz = 100 * 1000;
+
+    i2c_master_bus_config_t bus_config = {};
+    bus_config.i2c_port = i2c_port;
+    bus_config.sda_io_num = sda_pin;
+    bus_config.scl_io_num = scl_pin;
+    bus_config.clk_source = I2C_CLK_SRC_DEFAULT;
+    bus_config.glitch_ignore_cnt = glitch_filter_cycles;
+    i2c_master_bus_handle_t bus = nullptr;
+    esp_err_t status = i2c_new_master_bus(&bus_config, &bus);
+    if (status != ESP_OK) {
+        ESP_LOGE(log_tag, "sensor I2C bus setup failed: %s", esp_err_to_name(status));
+        return status;
+    }
+
+    sht4x_config_t sensor_config = {};
+    sensor_config.i2c_address = sensor_address;
+    sensor_config.i2c_clock_speed = i2c_clock_hz;
+    sensor_config.repeat_mode = SHT4X_REPEAT_HIGH;
+    sensor_config.heater_mode = SHT4X_HEATER_OFF;
+    status = sht4x_init(bus, &sensor_config, &climate_sensor);
+    if (status != ESP_OK) {
+        ESP_LOGE(log_tag, "SHT40 setup failed: %s", esp_err_to_name(status));
+        return status;
+    }
+    return ESP_OK;
+}
+
+/**
+ * @brief Measures the indoor temperature and relative humidity with the SHT40.
+ * @param[out] temperature_c Temperature in degrees Celsius.
+ * @param[out] humidity_percent Relative humidity in percent, limited to 0..100 as the datasheet requires.
+ * @return ESP_OK, or the error of the measurement.
+ */
+esp_err_t climate_read(float& temperature_c, float& humidity_percent)
+{
+    constexpr float humidity_min_percent = 0.0f;
+    constexpr float humidity_max_percent = 100.0f;
+
+    float humidity = 0.0f;
+    const esp_err_t status = sht4x_get_measurement(climate_sensor, &temperature_c, &humidity);
+    if (status != ESP_OK) {
+        ESP_LOGE(log_tag, "SHT40 measurement failed: %s", esp_err_to_name(status));
+        return status;
+    }
+
+    humidity_percent = std::clamp(humidity, humidity_min_percent, humidity_max_percent);
+    return ESP_OK;
 }
 } // namespace bsp

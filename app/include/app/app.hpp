@@ -4,8 +4,8 @@
 
 namespace app {
 /**
- * @brief Brings up the board and draws the dashboard on its display.
- * @return ESP_OK on success, otherwise the error of the step that failed.
+ * @brief Brings up the board, draws the dashboard and keeps the indoor values up to date.
+ * @return Only if setup fails, with its error, or with ESP_OK if the sensor is missing and nothing needs updating.
  */
 esp_err_t start();
 } // namespace app
