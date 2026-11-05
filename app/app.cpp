@@ -2,15 +2,18 @@
 #include "bsp/bsp.hpp"
 #include "dashboard.hpp"
 #include "lvgl_port.hpp"
+#include "network.hpp"
 #include "lvgl/lvgl.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <ctime>
 
 namespace app {
 namespace {
@@ -18,9 +21,9 @@ constexpr const char* log_tag = "dashboard";
 
 /**
  * @brief Reads the indoor sensor and shows the values in the tiles; on a failed read the tiles keep their values.
- * @param[in] labels The INDOOR and HUMIDITY value labels.
+ * @param[in] labels The dashboard labels.
  */
-void show_climate(const dashboard::ClimateLabels& labels)
+void show_climate(const dashboard::Labels& labels)
 {
     constexpr std::size_t tile_text_bytes = 16;
 
@@ -75,32 +78,93 @@ esp_err_t adjust_backlight()
 }
 
 /**
- * @brief Every few seconds reads the sensors that were set up, redraws the changed tiles and adjusts the backlight; never returns.
- * @param[in] labels The INDOOR and HUMIDITY value labels.
+ * @brief Shows in the header whether the board is connected to Wi-Fi.
+ * @param[in] label The header's network label.
+ */
+void show_network(lv_obj_t* label)
+{
+    const char* text = network::connected() ? "Wi-Fi" : "No Wi-Fi";
+    lv_label_set_text(label, text);
+}
+
+/**
+ * @brief Shows the local time and date once the clock has been set from the internet, or what the board is still
+ *        waiting for; the clock and date are redrawn only when the minute changes.
+ * @param[in] labels The dashboard labels.
+ * @param[in,out] shown_minute Minute currently on the clock; -1 while no time is shown.
+ */
+void show_time(const dashboard::Labels& labels, int& shown_minute)
+{
+    constexpr int first_valid_year = 2025;
+    constexpr int calendar_base_year = 1900;
+    constexpr std::size_t text_bytes = 32;
+
+    const std::time_t now = std::time(nullptr);
+    std::tm local = {};
+    localtime_r(&now, &local);
+    if (local.tm_year + calendar_base_year < first_valid_year) {
+        const char* waiting_text = network::connected() ? "Getting the time..." : "Connecting to Wi-Fi...";
+        lv_label_set_text(labels.date, waiting_text);
+        return;
+    }
+
+    if (local.tm_min == shown_minute) {
+        return;
+    }
+    shown_minute = local.tm_min;
+
+    char clock_text[text_bytes] = {0};
+    std::strftime(clock_text, sizeof(clock_text), "%H:%M", &local);
+    lv_label_set_text(labels.clock, clock_text);
+
+    char date_text[text_bytes] = {0};
+    std::strftime(date_text, sizeof(date_text), "%a %d %b", &local);
+    for (char& letter : date_text) {
+        letter = static_cast<char>(std::toupper(static_cast<unsigned char>(letter)));
+    }
+    lv_label_set_text(labels.date, date_text);
+
+    ESP_LOGI(log_tag, "local time %s %s", date_text, clock_text);
+}
+
+/**
+ * @brief Once per second updates the network label, the clock and the date; every 5 seconds reads the sensors that were set up
+ *        and adjusts the backlight; never returns.
+ * @param[in] labels The dashboard labels.
  * @param[in] climate_ready true if the temperature and humidity sensor was set up.
  * @param[in] light_ready true if the ambient light sensor was set up.
  */
-[[noreturn]] void refresh_forever(const dashboard::ClimateLabels& labels, bool climate_ready, bool light_ready)
+[[noreturn]] void run_forever(const dashboard::Labels& labels, bool climate_ready, bool light_ready)
 {
-    constexpr std::uint32_t refresh_period_ms = 5000;
+    constexpr std::uint32_t pass_period_ms = 1000;
+    constexpr int passes_per_sensor_read = 5;
 
+    int shown_minute = -1;
+    int passes_since_sensor_read = 0;
     for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(refresh_period_ms));
+        vTaskDelay(pdMS_TO_TICKS(pass_period_ms));
 
-        if (climate_ready) {
-            show_climate(labels);
-            lv_refr_now(nullptr);
+        show_network(labels.network);
+        show_time(labels, shown_minute);
+
+        ++passes_since_sensor_read;
+        if (passes_since_sensor_read == passes_per_sensor_read) {
+            passes_since_sensor_read = 0;
+            if (climate_ready) {
+                show_climate(labels);
+            }
+            if (light_ready) {
+                (void)adjust_backlight();
+            }
         }
 
-        if (light_ready) {
-            (void)adjust_backlight();
-        }
+        lv_refr_now(nullptr);
     }
 }
 } // namespace
 
 /**
- * @brief Brings up the board, draws the dashboard and keeps the indoor values up to date.
+ * @brief Brings up the board and the network, draws the dashboard and keeps it up to date.
  * @return Only if the board or the display cannot be set up, with the error of that step.
  */
 esp_err_t start()
@@ -121,9 +185,9 @@ esp_err_t start()
         return status;
     }
 
-    const dashboard::ClimateLabels climate_labels = dashboard::create();
+    const dashboard::Labels labels = dashboard::create();
     if (climate_ready) {
-        show_climate(climate_labels);
+        show_climate(labels);
     }
     lv_refr_now(nullptr);
 
@@ -136,6 +200,7 @@ esp_err_t start()
         bsp::display_backlight(full_brightness_percent);
     }
 
-    refresh_forever(climate_labels, climate_ready, light_ready);
+    (void)network::start();
+    run_forever(labels, climate_ready, light_ready);
 }
 } // namespace app

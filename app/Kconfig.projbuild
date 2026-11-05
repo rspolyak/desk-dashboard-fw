@@ -1,0 +1,15 @@
+menu "Desk dashboard"
+
+    config DASHBOARD_WIFI_SSID
+        string "Wi-Fi network name"
+        default ""
+        help
+            Name (SSID) of the Wi-Fi network the dashboard joins to set its clock from the internet.
+
+    config DASHBOARD_WIFI_PASSWORD
+        string "Wi-Fi password"
+        default ""
+        help
+            Password of that Wi-Fi network. It is kept in sdkconfig, which git does not track.
+
+endmenu

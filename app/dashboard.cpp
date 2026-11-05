@@ -140,32 +140,33 @@ void sun(lv_obj_t* parent)
 } // namespace
 
 /**
- * @brief Builds the dashboard on the active LVGL screen, laid out for 480x320; the indoor values start as dashes.
- * @return The labels of the INDOOR and HUMIDITY tiles, for updating their values.
+ * @brief Builds the dashboard on the active LVGL screen, laid out for 480x320.
+ * @return The labels the application updates; the clock starts empty, the date line as "Connecting to Wi-Fi...",
+ *         the network label as "No Wi-Fi" and the indoor values as dashes.
  */
-ClimateLabels create()
+Labels create()
 {
     lv_obj_t* screen = lv_screen_active();
     lv_obj_set_style_bg_color(screen, lv_color_hex(background_color), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_scrollable(screen, false);
 
-    lv_obj_align(label(screen, "SUN 27 SEP", montserrat_bold_16, text_color), LV_ALIGN_TOP_LEFT,
-                 header_margin_x, date_y);
-    lv_obj_align(label(screen, "Wi-Fi", montserrat_bold_12, text_color), LV_ALIGN_TOP_RIGHT,
-                 -header_margin_x, network_y);
+    Labels labels = {};
+    labels.date = label(screen, "Connecting to Wi-Fi...", montserrat_bold_16, text_color);
+    lv_obj_align(labels.date, LV_ALIGN_TOP_LEFT, header_margin_x, date_y);
+    labels.network = label(screen, "No Wi-Fi", montserrat_bold_12, text_color);
+    lv_obj_align(labels.network, LV_ALIGN_TOP_RIGHT, -header_margin_x, network_y);
     plain_box(screen, divider_x, divider_y, divider_width, divider_thickness, divider_color);
 
-    lv_obj_align(label(screen, "14:37", montserrat_bold_72, text_color), LV_ALIGN_LEFT_MID, clock_x,
-                 clock_offset_y);
+    labels.clock = label(screen, "", montserrat_bold_72, text_color);
+    lv_obj_align(labels.clock, LV_ALIGN_LEFT_MID, clock_x, clock_offset_y);
     sun(screen);
     lv_obj_align(label(screen, "18\xC2\xB0 Sunny", montserrat_bold_16, text_color), LV_ALIGN_TOP_MID,
                  sun_x - screen_center_x, weather_text_y);
 
-    ClimateLabels climate = {};
-    climate.temperature = tile(screen, tile_x[0], "INDOOR", "--.-\xC2\xB0" "C", value_cyan);
-    climate.humidity = tile(screen, tile_x[1], "HUMIDITY", "-- %", value_cyan);
+    labels.temperature = tile(screen, tile_x[0], "INDOOR", "--.-\xC2\xB0" "C", value_cyan);
+    labels.humidity = tile(screen, tile_x[1], "HUMIDITY", "-- %", value_cyan);
     tile(screen, tile_x[2], "NEXT", "15:00 Standup", text_color);
-    return climate;
+    return labels;
 }
 } // namespace app::dashboard

@@ -4,7 +4,7 @@
 
 namespace app {
 /**
- * @brief Brings up the board, draws the dashboard and keeps the indoor values up to date.
+ * @brief Brings up the board and the network, draws the dashboard and keeps it up to date.
  * @return Only if the board or the display cannot be set up, with the error of that step.
  */
 esp_err_t start();
