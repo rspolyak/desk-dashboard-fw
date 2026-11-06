@@ -128,8 +128,8 @@ void show_time(const dashboard::Labels& labels, int& shown_minute)
 }
 
 /**
- * @brief Once per second updates the network label, the clock and the date; every 5 seconds reads the sensors that were set up
- *        and adjusts the backlight; never returns.
+ * @brief Once per second updates the network label, the clock and the date; on the first pass and every 5 seconds after
+ *        it reads the sensors that were set up and adjusts the backlight; never returns.
  * @param[in] labels The dashboard labels.
  * @param[in] climate_ready true if the temperature and humidity sensor was set up.
  * @param[in] light_ready true if the ambient light sensor was set up.
@@ -138,27 +138,29 @@ void show_time(const dashboard::Labels& labels, int& shown_minute)
 {
     constexpr std::uint32_t pass_period_ms = 1000;
     constexpr int passes_per_sensor_read = 5;
+    constexpr int full_brightness_percent = 100;
 
     int shown_minute = -1;
     int passes_since_sensor_read = 0;
     for (;;) {
-        vTaskDelay(pdMS_TO_TICKS(pass_period_ms));
-
         show_network(labels.network);
         show_time(labels, shown_minute);
 
-        ++passes_since_sensor_read;
-        if (passes_since_sensor_read == passes_per_sensor_read) {
-            passes_since_sensor_read = 0;
+        if (passes_since_sensor_read == 0) {
             if (climate_ready) {
                 show_climate(labels);
             }
             if (light_ready) {
                 (void)adjust_backlight();
+            } else {
+                bsp::display_backlight(full_brightness_percent);
             }
         }
 
         lv_refr_now(nullptr);
+
+        passes_since_sensor_read = (passes_since_sensor_read + 1) % passes_per_sensor_read;
+        vTaskDelay(pdMS_TO_TICKS(pass_period_ms));
     }
 }
 } // namespace
@@ -186,21 +188,10 @@ esp_err_t start()
     }
 
     const dashboard::Labels labels = dashboard::create();
-    if (climate_ready) {
-        show_climate(labels);
-    }
     lv_refr_now(nullptr);
 
-    constexpr int full_brightness_percent = 100;
-    bool backlight_set = false;
-    if (light_ready) {
-        backlight_set = adjust_backlight() == ESP_OK;
-    }
-    if (!backlight_set) {
-        bsp::display_backlight(full_brightness_percent);
-    }
-
     (void)network::start();
+
     run_forever(labels, climate_ready, light_ready);
 }
 } // namespace app
